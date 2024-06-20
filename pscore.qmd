@@ -1,0 +1,236 @@
+---
+title: "Propensity Score Methods"
+title-block-banner: true
+format:
+  html:
+    page-layout: full
+    embed-resources: true    
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, comment=NA, fig.width = 3, fig.asp = 0.618, out.width = "100%", fig.align = "center", dev='svg')
+```
+
+# R packages used
+```{r}
+library(data.table)
+library(table1)
+library(gtsummary)
+library(flextable)
+library(tidyverse)
+library(broom)
+library(MatchIt)
+library(WeightIt)
+library(marginaleffects)
+```
+
+See [Optimally combining propensity score subclasses](https://onlinelibrary.wiley.com/doi/full/10.1002/sim.7046), for the recipe used to create the dataset for these examples.
+
+# Data Generating Mechanism
+```{r}
+set.seed(2891286) # Make it reproducible
+
+DT <- data.table(ID = 1:2000, key = "ID")
+
+DT[, W1 := runif(1, min = 0.02, max = 0.70), by = .(ID)]
+DT[, W2 := rnorm(1, 0.2 + 0.125*W1, 1), by = .(ID)]
+DT[, W3 := rnorm(1, -2, 0.7), by = .(ID)]
+DT[, W4 := rbinom(1, 1, prob = 0.4), by = .(ID)]
+DT[, xLOGIT := -0.5 + 1*W1 + 0.1*(W1^2) - 0.5*W2 + 0.5*W1*W2]
+DT[, A := rbinom(1, 1, prob = plogis(xLOGIT)), by = .(ID)]
+DT[, Y := rnorm(1, -0.5 + 3*W1 + 3*(W1^2) - 2*W2 + 2*A, 1), by = .(ID)]
+```
+
+```{r}
+DT[, A := factor(A, labels = c("Unexposed","Exposed"))]
+```
+
+# What the data look like
+```{r}
+head(DT) |> flextable()
+```
+
+-   Variables W1 and W2 are measured confounders. They affect the probability of exposure `A` **and** they affect outcome `Y`.
+-   Variables W3 and W4 are measured variables that are unrelated to both exposure `A` and outcome `Y`.
+-   Variable `A` indicates whether an individual was exposed or unexposed to the intervention of interest.
+-   Variable `Y` is an outcome of interest.
+
+# Logistic regression model to obtain a propensity score for each individual
+```{r}
+ps_mod <- glm(A == "Exposed" ~ W1 + I(W1^2) + W2 + W1*W2, 
+              data = DT, family = binomial)
+```
+
+## Add each individual's propensity score to the dataset
+```{r}
+DT[, PSCORE := predict(ps_mod, type = "response")]  
+```
+
+## Summarize the data by exposure
+```{r}
+table1(~ W1 + W2 + W3 + W4 + Y + PSCORE | A, data = DT)
+```
+
+# Checking covariate balance 
+
+# Using the propensity score to estimate the causal effect of `A` on `Y`
+
+## Stratification
+```{r}
+DT[, SUBCLASS := cut(PSCORE, breaks = quantile(PSCORE, prob = seq(0,1,1/5)), include.lowest=TRUE)]
+```
+
+```{r}
+tbl_cross(DT, row = A, col = SUBCLASS, percent = "row")
+```
+
+### Subclass-specific treatment effects
+```{r, echo=TRUE, results=FALSE}
+DT %>% 
+  nest_by(SUBCLASS) %>% 
+  mutate(model = list(lm(Y ~ A, data = data))) %>% 
+  reframe(tidy(model)) %>%
+  filter(term == "AExposed")
+```
+
+```{r, echo=FALSE}
+DT %>% 
+  nest_by(SUBCLASS) %>% 
+  mutate(model = list(lm(Y ~ A, data = data))) %>% 
+  reframe(tidy(model)) %>%
+  filter(term == "AExposed") |>
+  flextable() |>
+  colformat_double(j = c("estimate", "std.error",
+                         "statistic"), digits = 3) |>
+  set_formatter("p.value" = function(x) { gsub("NA", "", formatC(x, format = "e", digits = 2)) })
+```
+
+### Pooled treatment effect
+```{r}
+mSC <- matchit(A ~ W1 + I(W1^2) + W2 + W1*W2, data = DT,
+                  method = "subclass", subclass = 5,
+                  estimand = "ATE", min.n = 2)
+
+mSC
+
+md <- match.data(mSC)
+```
+
+```{r}
+fitS <- lm(Y ~ subclass*A*W1*W2, data = md)
+```
+
+### Estimate the causal effect of exposure on the outcome where the target estimand is the average treatment effect (ATE) 
+```{r, echo=TRUE, results=FALSE}
+avg_comparisons(fitS,
+                variables = "A",
+                vcov = "HC3")
+```
+
+```{r, echo=FALSE}
+avg_comparisons(fitS,
+                variables = "A",
+                vcov = "HC3") |>
+  select(contrast, estimate, std.error, statistic,
+         conf.low, conf.high) |>
+  flextable() |>
+  colformat_double(j = c("estimate", "std.error",
+                         "statistic","conf.low","conf.high"), digits = 3)
+```
+
+### Average estimated potential outcomes
+```{r, echo=TRUE, results=FALSE}
+avg_predictions(fitS, variables = "A",
+                vcov = ~subclass)
+```
+
+```{r, echo=FALSE}
+avg_predictions(fitS, variables = "A",
+                vcov = ~subclass) |>
+  select(A, estimate, conf.low, conf.high) |>
+  flextable() |>
+    colformat_double(j = c("estimate","conf.low","conf.high"), 
+                     digits = 3)
+```
+
+## Matching
+```{r}
+mF <- matchit(A ~ W1 + I(W1^2) + W2 + W1*W2, data = DT,
+               method = "full", estimand = "ATE")
+mF
+
+md <- match.data(mF)
+
+head(md)
+
+fit1 <- lm(Y ~ A*W1*W2, data = md, weights = weights)
+```
+
+### Estimate the causal effect of exposure on the outcome where the target estimand is the average treatment effect (ATE) 
+```{r, echo=TRUE, results=FALSE}
+avg_comparisons(fit1, variables = "A",
+                vcov = ~subclass,
+                wts = "weights") 
+```
+
+```{r, echo=FALSE}
+avg_comparisons(fit1, variables = "A",
+                vcov = ~subclass,
+                wts = "weights") |>
+  select(contrast, estimate, std.error, statistic,
+         conf.low, conf.high) |>
+  flextable() |>
+  colformat_double(j = c("estimate", "std.error",
+                         "statistic","conf.low","conf.high"), digits = 3)
+```
+
+### Average estimated potential outcomes
+```{r, echo=TRUE, results=FALSE}
+avg_predictions(fit1, variables = "A",
+                vcov = ~subclass,
+                wts = "weights")
+```
+
+```{r, echo=FALSE}
+avg_predictions(fit1, variables = "A",
+                vcov = ~subclass,
+                wts = "weights") |>
+  select(A, estimate, conf.low, conf.high) |>
+  flextable() |>
+    colformat_double(j = c("estimate","conf.low","conf.high"), 
+                     digits = 3)
+```
+
+[Estimating Effects After Matching](https://cran.r-project.org/web/packages/MatchIt/vignettes/estimating-effects.html)
+
+## Weighting
+### Weight for estimating average treatment effect (ATE)
+```{r}
+weights_weightit <- weightit(A ~ W1 + I(W1^2) + W2 + W1*W2,  
+         data = DT, 
+         estimand = "ATE",
+         method = "ps")
+
+DT[, psweight_ATE := weights_weightit$weights]
+```
+
+### Weighted linear model for average treatment effect (ATE)
+```{r}
+fm_w <- lm(Y ~ A, data = DT, weights = psweight_ATE)
+```
+
+```{r, echo=FALSE}
+tidy(fm_w) |>
+  select(term, estimate, std.error, statistic,
+         p.value) |>
+  flextable() |>
+  colformat_double(j = c("estimate", "std.error",
+                         "statistic"), digits = 3) |>
+    set_formatter("p.value" = function(x) { gsub("NA", "", formatC(x, format = "e", digits = 2)) })
+```
+
+[Using WeightIt to Estimate Balancing Weights](https://cran.r-project.org/web/packages/WeightIt/vignettes/WeightIt.html)
+
+
+
