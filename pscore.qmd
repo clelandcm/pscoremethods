@@ -75,13 +75,28 @@ table1(~ W1 + W2 + W3 + W4 + Y + PSCORE | A, data = DT)
 
 # Using the propensity score to estimate the causal effect of `A` on `Y`
 
-## Stratification
+## Stratification by the propensity score
 ```{r}
 DT[, SUBCLASS := cut(PSCORE, breaks = quantile(PSCORE, prob = seq(0,1,1/5)), include.lowest=TRUE)]
 ```
 
 ```{r}
 tbl_cross(DT, row = A, col = SUBCLASS, percent = "row")
+```
+
+```{r}
+mSC <- matchit(A ~ W1 + I(W1^2) + W2 + W1*W2, data = DT,
+                  method = "subclass", subclass = 5,
+                  estimand = "ATE", min.n = 2)
+
+mSC
+
+md <- match.data(mSC)
+```
+
+### Check covariate balance
+```{r}
+summary(mSC, addlvariables = ~ I(W1^2) + W1:W2)
 ```
 
 ### Subclass-specific treatment effects
@@ -106,16 +121,6 @@ DT %>%
 ```
 
 ### Pooled treatment effect
-```{r}
-mSC <- matchit(A ~ W1 + I(W1^2) + W2 + W1*W2, data = DT,
-                  method = "subclass", subclass = 5,
-                  estimand = "ATE", min.n = 2)
-
-mSC
-
-md <- match.data(mSC)
-```
-
 ```{r}
 fitS <- lm(Y ~ subclass*A*W1*W2, data = md)
 ```
@@ -166,6 +171,11 @@ head(md)
 fit1 <- lm(Y ~ A*W1*W2, data = md, weights = weights)
 ```
 
+### Check covariate balance
+```{r}
+summary(mF, addlvariables = ~ I(W1^2) + W1:W2)
+```
+
 ### Estimate the causal effect of exposure on the outcome where the target estimand is the average treatment effect (ATE) 
 ```{r, echo=TRUE, results=FALSE}
 avg_comparisons(fit1, variables = "A",
@@ -201,7 +211,7 @@ avg_predictions(fit1, variables = "A",
                      digits = 3)
 ```
 
-[Estimating Effects After Matching](https://cran.r-project.org/web/packages/MatchIt/vignettes/estimating-effects.html)
+For additional details see: [Estimating Effects After Matching](https://cran.r-project.org/web/packages/MatchIt/vignettes/estimating-effects.html)
 
 ## Weighting
 ### Weight for estimating average treatment effect (ATE)
@@ -215,6 +225,12 @@ weights_weightit <- weightit(A ~ W1 + I(W1^2) + W2 + W1*W2,
 ### Add each individual's weight to the dataset
 ```{r}
 DT[, psweight_ATE := weights_weightit$weights]
+```
+
+### Check covariate balance
+```{r}
+bal.tab(weights_weightit, estimand = "ATE", 
+        thresholds = c(m = .05))
 ```
 
 ### Weighted linear model for average treatment effect (ATE)
@@ -232,25 +248,9 @@ tidy(fm_w) |>
     set_formatter("p.value" = function(x) { gsub("NA", "", formatC(x, format = "e", digits = 2)) })
 ```
 
-[Using WeightIt to Estimate Balancing Weights](https://cran.r-project.org/web/packages/WeightIt/vignettes/WeightIt.html)
+For further details on weighting see: [Using WeightIt to Estimate Balancing Weights](https://cran.r-project.org/web/packages/WeightIt/vignettes/WeightIt.html)
 
-# [Checking covariate balance](https://cran.r-project.org/web/packages/MatchIt/vignettes/assessing-balance.html)
 
-## Subclassification 
-```{r}
-summary(mSC, addlvariables = ~ I(W1^2) + W1:W2)
-```
-
-## Matching
-```{r}
-summary(mF, addlvariables = ~ I(W1^2) + W1:W2)
-```
-
-## Weighting
-```{r}
-bal.tab(weights_weightit, estimand = "ATE", 
-        thresholds = c(m = .05))
-```
 
 
 
