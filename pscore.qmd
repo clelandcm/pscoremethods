@@ -22,6 +22,7 @@ library(tidyverse)
 library(broom)
 library(MatchIt)
 library(WeightIt)
+library(cobalt)
 library(marginaleffects)
 ```
 
@@ -71,8 +72,6 @@ DT[, PSCORE := predict(ps_mod, type = "response")]
 ```{r}
 table1(~ W1 + W2 + W3 + W4 + Y + PSCORE | A, data = DT)
 ```
-
-# Checking covariate balance 
 
 # Using the propensity score to estimate the causal effect of `A` on `Y`
 
@@ -211,7 +210,10 @@ weights_weightit <- weightit(A ~ W1 + I(W1^2) + W2 + W1*W2,
          data = DT, 
          estimand = "ATE",
          method = "ps")
+```
 
+### Add each individual's weight to the dataset
+```{r}
 DT[, psweight_ATE := weights_weightit$weights]
 ```
 
@@ -231,6 +233,24 @@ tidy(fm_w) |>
 ```
 
 [Using WeightIt to Estimate Balancing Weights](https://cran.r-project.org/web/packages/WeightIt/vignettes/WeightIt.html)
+
+# [Checking covariate balance](https://cran.r-project.org/web/packages/MatchIt/vignettes/assessing-balance.html)
+
+## Subclassification 
+```{r}
+summary(mSC, addlvariables = ~ I(W1^2) + W1:W2)
+```
+
+## Matching
+```{r}
+summary(mF, addlvariables = ~ I(W1^2) + W1:W2)
+```
+
+## Weighting
+```{r}
+bal.tab(weights_weightit, estimand = "ATE", 
+        thresholds = c(m = .05))
+```
 
 
 
