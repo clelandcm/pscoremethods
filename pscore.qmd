@@ -9,7 +9,7 @@ format:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, comment=NA, fig.width = 3, fig.asp = 0.618, out.width = "100%", fig.align = "center", dev='svg')
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, comment=NA, fig.width = 6, fig.asp = 0.618, out.width = "100%", fig.align = "center", dev='svg')
 ```
 
 # R packages used
@@ -85,7 +85,7 @@ tbl_cross(DT, row = A, col = SUBCLASS, percent = "row")
 ```
 
 ```{r}
-mSC <- matchit(A ~ W1 + I(W1^2) + W2 + W1*W2, data = DT,
+mSC <- matchit(A ~ W1 + I(W1^2) + W2 + I(W1*W2), data = DT,
                   method = "subclass", subclass = 5,
                   estimand = "ATE", min.n = 2)
 
@@ -96,7 +96,11 @@ md <- match.data(mSC)
 
 ### Check covariate balance
 ```{r}
-summary(mSC, addlvariables = ~ I(W1^2) + W1:W2)
+summary(mSC)
+```
+
+```{r}
+love.plot(mSC, thresholds = c(m=.1), var.order = "unadjusted")
 ```
 
 ### Subclass-specific treatment effects
@@ -160,7 +164,7 @@ avg_predictions(fitS, variables = "A",
 
 ## Matching
 ```{r}
-mF <- matchit(A ~ W1 + I(W1^2) + W2 + W1*W2, data = DT,
+mF <- matchit(A ~ W1 + I(W1^2) + W2 + I(W1*W2), data = DT,
                method = "full", estimand = "ATE")
 mF
 
@@ -173,7 +177,12 @@ fit1 <- lm(Y ~ A*W1*W2, data = md, weights = weights)
 
 ### Check covariate balance
 ```{r}
-summary(mF, addlvariables = ~ I(W1^2) + W1:W2)
+summary(mF)
+```
+
+```{r}
+love.plot(mF, 
+          thresholds = c(m=.1), var.order = "unadjusted")
 ```
 
 ### Estimate the causal effect of exposure on the outcome where the target estimand is the average treatment effect (ATE) 
@@ -216,7 +225,7 @@ For additional details see: [Estimating Effects After Matching](https://cran.r-p
 ## Weighting
 ### Weight for estimating average treatment effect (ATE)
 ```{r}
-weights_weightit <- weightit(A ~ W1 + I(W1^2) + W2 + W1*W2,  
+weights_weightit <- weightit(A ~ W1 + I(W1^2) + W2 + I(W1*W2),  
          data = DT, 
          estimand = "ATE",
          method = "ps")
@@ -231,6 +240,11 @@ DT[, psweight_ATE := weights_weightit$weights]
 ```{r}
 bal.tab(weights_weightit, estimand = "ATE", 
         thresholds = c(m = .05))
+```
+
+```{r}
+love.plot(weights_weightit, 
+          thresholds = c(m=.1), var.order = "unadjusted")
 ```
 
 ### Weighted linear model for average treatment effect (ATE)
